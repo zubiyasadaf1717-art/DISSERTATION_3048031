@@ -1,0 +1,28 @@
+if(!require("pacman")) install.packages("pacman")
+pacman::p_load(nhanesA, dplyr, janitor, ggplot2, naniar, knitr)
+# 1. Fetch the data example
+demo_raw <- nhanes('P_DEMO')
+# 2. Clean the column names (makes them all lowercase/standard)
+demo_clean <- demo_raw %>% clean_names()
+# 3. Look at the first few rows
+head(demo_clean[, 1:5]) %>% kable()
+# 1. Download multiple Modules
+demo_raw <- nhanes('P_DEMO') %>% clean_names()
+bmx_raw <- nhanes('P_BMX') %>% clean_names()
+trigly_raw <- nhanes('P_TRIGLY') %>% clean_names()
+# 2. Master Merge using SEQN
+# This combines all three files into one using the
+merged_data <- demo_raw %>%
+  left_join(bmx_raw, by = "seqn") %>%
+  left_join(trigly_raw, by = "seqn")
+cat("Merged dataset has", nrow(merged_data), "participants.")
+adult_data <- merged_data %>%
+  filter(ridageyr >= 18)
+cat("We are now focusing on", nrow(adult_data), "adults.")
+# We select a few key columns to see the difference
+adult_subset <- adult_data %>%
+  select(ridageyr, bmxbmi, bmxwaist, lbxtr)
+# Visualize missing data
+gg_miss_var(adult_subset) +
+  labs(title = "Missing Data by Variable",
+       subtitle = "Notice how LBXTR (Triglycerides) has much more missing data than BMI")
