@@ -1,0 +1,427 @@
+# ============================================================
+# NHANES 2017-MARCH 2020
+# WOMEN'S HEALTH RISK SCORING SYSTEM
+# ============================================================
+
+# ============================================================
+# 1. LOAD PACKAGES
+# ============================================================
+
+library(dplyr)
+library(ggplot2)
+library(corrplot)
+library(MASS)
+library(car)
+library(naniar)
+library(janitor)
+
+# ============================================================
+# 2. CHECK DATA EXISTS
+# ============================================================
+
+if (!exists("adult_data")) {
+  stop("adult_data not found. Run data preparation first.")
+}
+
+cat("Dataset loaded successfully\n")
+
+# ============================================================
+# 3. SELECT FEMALE PARTICIPANTS
+# ============================================================
+
+women_data <- adult_data %>%
+  dplyr::filter(riagendr == "Female") %>%
+  dplyr::select(
+    seqn,
+    ridageyr,
+    bmxbmi,
+    bmxwaist,
+    lbxtr
+  )
+
+cat(
+  "Women included before cleaning:",
+  nrow(women_data),
+  "\n"
+)
+
+# ============================================================
+# 4. CREATE COMPONENT RISK POINTS
+# ============================================================
+
+women_data <- women_data %>%
+  dplyr::mutate(
+    
+    age_points = dplyr::case_when(
+      ridageyr < 30 ~ 0,
+      ridageyr < 40 ~ 1,
+      ridageyr < 50 ~ 2,
+      ridageyr < 60 ~ 3,
+      TRUE ~ 4
+    ),
+    
+    bmi_points = dplyr::case_when(
+      is.na(bmxbmi) ~ NA_real_,
+      bmxbmi < 25 ~ 0,
+      bmxbmi < 30 ~ 1,
+      bmxbmi < 35 ~ 2,
+      TRUE ~ 3
+    ),
+    
+    waist_points = dplyr::case_when(
+      is.na(bmxwaist) ~ NA_real_,
+      bmxwaist < 80 ~ 0,
+      bmxwaist < 88 ~ 1,
+      TRUE ~ 2
+    ),
+    
+    trig_points = dplyr::case_when(
+      is.na(lbxtr) ~ NA_real_,
+      lbxtr < 150 ~ 0,
+      lbxtr < 200 ~ 1,
+      TRUE ~ 2
+    )
+    
+  )
+
+# ============================================================
+# 5. CALCULATE TOTAL RISK POINTS
+# ============================================================
+
+women_data <- women_data %>%
+  dplyr::mutate(
+    
+    total_risk_points =
+      age_points +
+      bmi_points +
+      waist_points +
+      trig_points
+    
+  )
+
+# ============================================================
+# 6. CREATE HEALTH SCORE
+# ============================================================
+
+women_data <- women_data %>%
+  dplyr::mutate(
+    
+    health_score =
+      round(
+        10 - ((total_risk_points / 11) * 9)
+      ),
+    
+    health_score =
+      pmax(
+        1,
+        pmin(10, health_score)
+      )
+    
+  )
+
+# ============================================================
+# 7. CREATE RISK CATEGORIES
+# ============================================================
+
+women_data <- women_data %>%
+  dplyr::mutate(
+    
+    risk_category = dplyr::case_when(
+      
+      health_score >= 8 ~ "Low Risk",
+      
+      health_score >= 5 &
+        health_score <= 7 ~ "Moderate Risk",
+      
+      health_score <= 4 ~ "High Risk",
+      
+      TRUE ~ NA_character_
+    )
+    
+  )
+
+# ============================================================
+# 8. ADD RECOMMENDATIONS
+# ============================================================
+
+women_data <- women_data %>%
+  dplyr::mutate(
+    
+    recommendation = dplyr::case_when(
+      
+      risk_category == "Low Risk" ~
+        "Maintain healthy lifestyle behaviours",
+      
+      risk_category == "Moderate Risk" ~
+        "Improve diet and physical activity",
+      
+      risk_category == "High Risk" ~
+        "Consider lifestyle intervention and professional review",
+      
+      TRUE ~
+        "Insufficient data available"
+    )
+    
+  )
+
+# ============================================================
+# 9. REMOVE MISSING VALUES
+# ============================================================
+
+analysis_data <- na.omit(women_data)
+
+cat(
+  "Final analytical sample:",
+  nrow(analysis_data),
+  "\n"
+)
+
+# ============================================================
+# 10. DESCRIPTIVE STATISTICS
+# ============================================================
+
+summary(
+  analysis_data[, c(
+    "ridageyr",
+    "bmxbmi",
+    "bmxwaist",
+    "lbxtr",
+    "health_score"
+  )]
+)
+
+# ============================================================
+# 11. RISK CATEGORY SUMMARY
+# ============================================================
+
+print(
+  table(
+    analysis_data$risk_category
+  )
+)
+
+print(
+  round(
+    prop.table(
+      table(
+        analysis_data$risk_category
+      )
+    ) * 100,
+    2
+  )
+)
+
+# ============================================================
+# 12. CORRELATION MATRIX
+# ============================================================
+
+cor_matrix <- cor(
+  
+  analysis_data[, c(
+    "ridageyr",
+    "bmxbmi",
+    "bmxwaist",
+    "lbxtr",
+    "health_score"
+  )],
+  
+  use = "complete.obs"
+  
+)
+
+print(round(cor_matrix, 3))
+
+corrplot(
+  cor_matrix,
+  method = "color",
+  addCoef.col = "black"
+)
+
+# ============================================================
+# 13. CORRELATION TABLE
+# ============================================================
+
+cor_table <- data.frame(
+  
+  Variable = c(
+    "Age",
+    "BMI",
+    "Waist Circumference",
+    "Triglycerides"
+  ),
+  
+  Correlation = round(
+    
+    c(
+      
+      cor(
+        analysis_data$ridageyr,
+        analysis_data$health_score
+      ),
+      
+      cor(
+        analysis_data$bmxbmi,
+        analysis_data$health_score
+      ),
+      
+      cor(
+        analysis_data$bmxwaist,
+        analysis_data$health_score
+      ),
+      
+      cor(
+        analysis_data$lbxtr,
+        analysis_data$health_score
+      )
+      
+    ),
+    
+    3
+  )
+  
+)
+
+print(cor_table)
+
+# ============================================================
+# 14. MULTIPLE REGRESSION
+# ============================================================
+
+full_model <- lm(
+  
+  health_score ~
+    ridageyr +
+    bmxbmi +
+    bmxwaist +
+    lbxtr,
+  
+  data = analysis_data
+  
+)
+
+cat("\nMULTIPLE REGRESSION RESULTS\n")
+
+summary(full_model)
+
+# ============================================================
+# 15. STEPWISE REGRESSION
+# ============================================================
+
+step_model <- stepAIC(
+  full_model,
+  direction = "both",
+  trace = FALSE
+)
+
+cat("\nSTEPWISE REGRESSION RESULTS\n")
+
+summary(step_model)
+
+# ============================================================
+# 16. VIF TEST
+# ============================================================
+
+cat("\nVIF VALUES\n")
+
+print(
+  vif(full_model)
+)
+
+# ============================================================
+# 17. HEALTH SCORE HISTOGRAM
+# ============================================================
+
+ggplot(
+  analysis_data,
+  aes(x = health_score)
+) +
+  geom_histogram(
+    binwidth = 1,
+    fill = "steelblue",
+    colour = "white"
+  ) +
+  labs(
+    title = "Women's Health Score Distribution",
+    x = "Health Score",
+    y = "Frequency"
+  ) +
+  theme_minimal()
+
+# ============================================================
+# 18. RISK CATEGORY PLOT
+# ============================================================
+
+ggplot(
+  analysis_data,
+  aes(
+    x = risk_category,
+    fill = risk_category
+  )
+) +
+  geom_bar() +
+  labs(
+    title = "Risk Categories",
+    x = "Risk Category",
+    y = "Count"
+  ) +
+  theme_minimal() +
+  theme(
+    legend.position = "none"
+  )
+
+# ============================================================
+# 19. MISSING DATA CHECK
+# ============================================================
+
+gg_miss_var(women_data)
+
+# ============================================================
+# 20. FINAL OUTPUT DATASET
+# ============================================================
+
+women_results <- analysis_data %>%
+  dplyr::select(
+    seqn,
+    ridageyr,
+    bmxbmi,
+    bmxwaist,
+    lbxtr,
+    age_points,
+    bmi_points,
+    waist_points,
+    trig_points,
+    total_risk_points,
+    health_score,
+    risk_category,
+    recommendation
+  )
+
+# ============================================================
+# 21. EXPORT RESULTS
+# ============================================================
+
+write.csv(
+  women_results,
+  "Women_Risk_Scored.csv",
+  row.names = FALSE
+)
+
+write.csv(
+  cor_table,
+  "Correlation_Table.csv",
+  row.names = FALSE
+)
+
+write.csv(
+  as.data.frame(
+    summary(full_model)$coefficients
+  ),
+  "Regression_Results.csv"
+)
+
+cat(
+  "\nAnalysis Complete\n",
+  "\nWomen_Risk_Scored.csv saved",
+  "\nCorrelation_Table.csv saved",
+  "\nRegression_Results.csv saved\n"
+)
